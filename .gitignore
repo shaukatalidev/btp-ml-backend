@@ -1,0 +1,21 @@
+# Ignore Python compiled files
+*.pyc
+
+__pycache__/
+
+# Ignore environment files
+.env
+btp-btp/
+# Ignore log files
+*.log
+
+# Ignore Docker files
+docker-compose.yml
+Dockerfile
+
+# Ignore node_modules for JavaScript/Node.js projects
+node_modules/
+
+# Ignore system files
+.DS_Store
+Thumbs.db

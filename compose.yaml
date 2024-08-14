@@ -1,0 +1,28 @@
+version: "3.8"
+
+services:
+  web:
+    build: .
+    command: uvicorn app:app --host 0.0.0.0
+    volumes:
+      - .:/app
+    ports:
+      - 8000:8000
+# version: "3.8"
+
+# services:
+#   fastapi-app:
+#     image: backend-web:latest
+#     build:
+#       context: .
+#       dockerfile: Dockerfile
+#     ports:
+#       - "8000:80"
+#     volumes:
+#       - .:/app
+#     environment:
+#       - PYTHONUNBUFFERED=1
+
+# networks:
+#   default:
+#     name: bridge
