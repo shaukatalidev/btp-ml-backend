@@ -18,6 +18,11 @@ pydantic
 pydantic_core
 python-dateutil
 python-multipart
+opencv-python
+opencv-python-headless
+imutils
+easyocr
+openpyxl
 pytz
 regex
 requests
@@ -33,3 +38,8 @@ typing_extensions
 tzdata
 urllib3
 uvicorn
+torchaudio
+transformers
+sounddevice
+bertopic
+soundfile

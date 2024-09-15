@@ -1,11 +1,10 @@
 # Ignore Python compiled files
 *.pyc
-
 __pycache__/
 
 # Ignore environment files
 .env
-btp-btp/
+venv/
 # Ignore log files
 *.log
 

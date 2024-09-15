@@ -5,11 +5,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.cluster import KMeans
 import nltk
-from sklearn.metrics.pairwise import cosine_similarity
 import pandas as pd
+from bertopic import BERTopic
+from bertopic.representation import KeyBERTInspired
 import datetime
 import ffmpeg
 import speech_recognition as sr
@@ -17,14 +16,15 @@ import cv2
 import numpy as np
 import imutils
 import easyocr
-from openpyxl import Workbook
+import torch
+import torchaudio
+from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
+import os
 
 # Initialize the NLTK stemmer
 stemmer = nltk.PorterStemmer()
 
 
-class ProcessRequest(BaseModel):
-    texts: List[str]
 
 
 class StemmingRequest(BaseModel):
@@ -54,6 +54,12 @@ async def get_status():
 #     text = request.text.lower().strip()
 #     text = stemmer.stem(text)
 #     return text
+
+# Request model
+class ProcessRequest(BaseModel):
+    texts: List[str]
+    
+    
 def preprocess_queries(texts):
     text = texts.lower().strip()
     text = stemmer.stem(text)
@@ -62,31 +68,33 @@ def preprocess_queries(texts):
 
 @app.post("/process", response_model=List[str])
 async def pos_queries(request: ProcessRequest):
+    # Step 1: Load the dataset
     rawdatas = request.texts
-    datas = []
-    for rawdata in rawdatas:
-        datas.append(preprocess_queries(rawdata))
-    representative_questions = []
-    df = pd.DataFrame({"question_text": [], "cluster": []})
-    # print(request.texts)
-    df["question_text"] = datas
-    tfidfVectorizer = TfidfVectorizer()
-    query_embeddings = tfidfVectorizer.fit_transform(df["question_text"])
-    num_clusters = 4
-    kmeans = KMeans(n_clusters=num_clusters)
-    kmeans.fit(query_embeddings)
-    df["cluster"] = kmeans.labels_
-    for cluster_id in range(num_clusters):
-        cluster_data = df.loc[df["cluster"] == cluster_id]
-        centroid = kmeans.cluster_centers_[cluster_id]
-        similarities = cosine_similarity(
-            tfidfVectorizer.transform(cluster_data["question_text"]), [centroid]
-        )
-        representative_question = cluster_data.iloc[similarities.argmax()][
-            "question_text"
-        ]
-        representative_questions.append(representative_question)
-    return representative_questions
+    datas = [preprocess_queries(rawdata) for rawdata in rawdatas]
+
+    # Step 2: Convert to DataFrame for easier handling
+    df = pd.DataFrame({"question": datas})
+
+    # Step 3: Set up BERTopic with KeyBERTInspired representation
+    representation_model = KeyBERTInspired()
+    topic_model = BERTopic(representation_model=representation_model)
+
+    # Step 4: Fit the BERTopic model to the preprocessed questions
+    topics, probs = topic_model.fit_transform(df['question'].tolist())
+
+    # Step 5: Assign topics to the questions
+    df['topic'] = topics
+
+    # Step 6: Identify the most representative question for each cluster
+    # Here we simply take the first question in each cluster
+    # You can implement more advanced methods like centroid or median embeddings
+    representative_questions = df.groupby('topic')['question'].first().reset_index()
+
+    # Step 7: Convert the result into a list of representative questions
+    representative_questions_list = representative_questions['question'].tolist()
+
+    # Step 8: Return the representative questions
+    return representative_questions_list
 
 
 def rdm():
@@ -103,25 +111,63 @@ def convertToWAV(file):
     return outloc
 
 
+# Preprocess the audio for model input
+def preprocess_audio(file_path, processor, sample_rate=16000):
+    speech_array, sr = torchaudio.load(file_path)
+    if sr != sample_rate:
+        resampler = torchaudio.transforms.Resample(sr, sample_rate)
+        speech_array = resampler(speech_array)
+    input_values = processor(speech_array.squeeze().numpy(), return_tensors="pt", sampling_rate=sample_rate).input_values
+    return input_values
+
+
 @app.post("/transcribe")
-async def transcribe(file: UploadFile = File(...)):
-    if not re.match("audio/", file.content_type):
-        raise HTTPException(status_code=400, detail="File type not supported")
+async def transcribe(file: UploadFile = File(...),language: str = Form("en")):
 
-    if not re.match("audio/wav", file.content_type):
-        file_path = convertToWAV(file)
+    print("language:", language)
+    if language == "en":
+        
+        if not re.match("audio/", file.content_type):
+            raise HTTPException(status_code=400, detail="File type not supported")
+
+        if not re.match("audio/wav", file.content_type):
+            file_path = convertToWAV(file)
+        else:
+            file_path = file.filename
+        try:
+            recognizer = sr.Recognizer()
+            with sr.AudioFile(file_path) as source:
+                data = recognizer.record(source)
+            transcript = recognizer.recognize_google(data, key=None)
+            os.remove(file_path)
+            return {"transcript": transcript}
+        except Exception as e:
+            print("error: ", str(e))
+            raise HTTPException(status_code=500, detail="Unable to transcribe")
+    # Hindi transcription (using Wav2Vec2)
     else:
-        file_path = file.filename
+        
+        try:
+            file_path = convertToWAV(file)  # Ensure file is converted to wav
+            
+            # Load Wav2Vec2 processor and model for Hindi
+            model_name = "theainerd/Wav2Vec2-large-xlsr-hindi"
+            processor = Wav2Vec2Processor.from_pretrained(model_name)
+            model = Wav2Vec2ForCTC.from_pretrained(model_name)
 
-    try:
-        recognizer = sr.Recognizer()
-        with sr.AudioFile(file_path) as source:
-            data = recognizer.record(source)
-        transcript = recognizer.recognize_google(data, key=None)
-        return {"transcript": transcript}
-    except Exception as e:
-        print("error: ", str(e))
-        raise HTTPException(status_code=500, detail="Unable to transcribe")
+            # Transcribe audio
+            input_values = preprocess_audio(file_path, processor)
+            logits = model(input_values).logits
+            predicted_ids = torch.argmax(logits, dim=-1)
+            transcription = processor.batch_decode(predicted_ids)
+            
+            os.remove(file_path)  # Clean up the uploaded/converted file
+            print("Transcription:", transcription[0])
+            return {"transcript": transcription[0]}
+
+        except Exception as e:
+            print("Error during Hindi transcription:", str(e))
+            raise HTTPException(status_code=500, detail="Unable to transcribe in Hindi")
 
 
 @app.post("/mcq-analysis")
@@ -163,6 +209,7 @@ async def mcq_analysis(file: UploadFile = File(...), rollNumbers: str = Form(...
         for roll_mcq in temp_extracted_mcq_with_roll:
             extracted_mcq_with_roll.add(roll_mcq)
 
+        print("extrcted roll numbers:", extracted_roll_numbers)
         if not current_expected_roll_numbers:
             return JSONResponse(
                 content={
