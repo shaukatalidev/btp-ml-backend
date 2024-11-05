@@ -16,6 +16,9 @@ numpy
 pandas
 pydantic
 pydantic_core
+protobuf
+tiktoken
+sentencepiece
 python-dateutil
 python-multipart
 opencv-python

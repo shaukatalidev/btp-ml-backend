@@ -20,11 +20,12 @@ import torch
 import torchaudio
 from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
 import os
+from transformers import AutoTokenizer, AutoModel
+import torch
+from sklearn.cluster import KMeans
 
 # Initialize the NLTK stemmer
 stemmer = nltk.PorterStemmer()
-
-
 
 
 class StemmingRequest(BaseModel):
@@ -35,6 +36,8 @@ app = FastAPI()
 
 # Enable CORS (Cross-Origin Resource Sharing)
 origins = ["*"]
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -55,45 +58,80 @@ async def get_status():
 #     text = stemmer.stem(text)
 #     return text
 
+
 # Request model
 class ProcessRequest(BaseModel):
     texts: List[str]
-    
-    
+
+
 def preprocess_queries(texts):
     text = texts.lower().strip()
     text = stemmer.stem(text)
     return text
 
 
+# # Step 4: Load ai4bharat's Indic-BERT model
+tokenizer = AutoTokenizer.from_pretrained("ai4bharat/indic-bert")
+model = AutoModel.from_pretrained("ai4bharat/indic-bert")
+
+
+# Custom embedding model class for BERTopic
+class IndicBERTEmbedding:
+    def __init__(self, model, tokenizer):
+        self.model = model
+        self.tokenizer = tokenizer
+
+    def embed(self, documents):
+        # Tokenize and encode the inputs
+        inputs = self.tokenizer(
+            documents,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=128,
+        )
+        with torch.no_grad():
+            # Get the embeddings from the model
+            outputs = self.model(**inputs)
+        embeddings = outputs.last_hidden_state.mean(
+            dim=1
+        )  # Average the token embeddings to get sentence embeddings
+        return embeddings.numpy()  # Return as numpy array for compatibility
+
+
+# Instantiate the embedding model
+embedding_model = IndicBERTEmbedding(model, tokenizer)
+
+
 @app.post("/process", response_model=List[str])
 async def pos_queries(request: ProcessRequest):
-    # Step 1: Load the dataset
+    # Step 1: Load the dataset from request
     rawdatas = request.texts
     datas = [preprocess_queries(rawdata) for rawdata in rawdatas]
 
     # Step 2: Convert to DataFrame for easier handling
     df = pd.DataFrame({"question": datas})
 
-    # Step 3: Set up BERTopic with KeyBERTInspired representation
-    representation_model = KeyBERTInspired()
-    topic_model = BERTopic(representation_model=representation_model)
+    # Step 3: Generate embeddings using Indic-BERT
+    questions = df["question"].tolist()
+    embeddings = embedding_model.embed(questions)
 
-    # Step 4: Fit the BERTopic model to the preprocessed questions
-    topics, probs = topic_model.fit_transform(df['question'].tolist())
+    # Step 4: Apply KMeans clustering on the embeddings
+    num_clusters = 5  # Adjust the number of clusters as needed
+    kmeans = KMeans(n_clusters=num_clusters, random_state=0)
+    kmeans.fit(embeddings)
 
-    # Step 5: Assign topics to the questions
-    df['topic'] = topics
+    # Step 5: Identify the most representative question for each cluster
+    clusters_multilingual = {}
+    for i, label in enumerate(kmeans.labels_):
+        if label not in clusters_multilingual:
+            clusters_multilingual[label] = questions[i]
 
-    # Step 6: Identify the most representative question for each cluster
-    # Here we simply take the first question in each cluster
-    # You can implement more advanced methods like centroid or median embeddings
-    representative_questions = df.groupby('topic')['question'].first().reset_index()
+    # Step 6: Return the representative questions
+    representative_questions_list = [
+        question for _, question in clusters_multilingual.items()
+    ]
 
-    # Step 7: Convert the result into a list of representative questions
-    representative_questions_list = representative_questions['question'].tolist()
-
-    # Step 8: Return the representative questions
     return representative_questions_list
 
 
@@ -117,16 +155,16 @@ def preprocess_audio(file_path, processor, sample_rate=16000):
     if sr != sample_rate:
         resampler = torchaudio.transforms.Resample(sr, sample_rate)
         speech_array = resampler(speech_array)
-    input_values = processor(speech_array.squeeze().numpy(), return_tensors="pt", sampling_rate=sample_rate).input_values
+    input_values = processor(
+        speech_array.squeeze().numpy(), return_tensors="pt", sampling_rate=sample_rate
+    ).input_values
     return input_values
 
 
 @app.post("/transcribe")
-async def transcribe(file: UploadFile = File(...),language: str = Form("en")):
-
+async def transcribe(file: UploadFile = File(...), language: str = Form("en")):
     print("language:", language)
     if language == "en":
-        
         if not re.match("audio/", file.content_type):
             raise HTTPException(status_code=400, detail="File type not supported")
 
@@ -146,10 +184,9 @@ async def transcribe(file: UploadFile = File(...),language: str = Form("en")):
             raise HTTPException(status_code=500, detail="Unable to transcribe")
     # Hindi transcription (using Wav2Vec2)
     else:
-        
         try:
             file_path = convertToWAV(file)  # Ensure file is converted to wav
-            
+
             # Load Wav2Vec2 processor and model for Hindi
             model_name = "theainerd/Wav2Vec2-large-xlsr-hindi"
             processor = Wav2Vec2Processor.from_pretrained(model_name)
@@ -160,7 +197,7 @@ async def transcribe(file: UploadFile = File(...),language: str = Form("en")):
             logits = model(input_values).logits
             predicted_ids = torch.argmax(logits, dim=-1)
             transcription = processor.batch_decode(predicted_ids)
-            
+
             os.remove(file_path)  # Clean up the uploaded/converted file
             print("Transcription:", transcription[0])
             return {"transcript": transcription[0]}
@@ -206,10 +243,11 @@ async def mcq_analysis(file: UploadFile = File(...), rollNumbers: str = Form(...
         for roll in temp_extracted_roll_number:
             extracted_roll_numbers.add(roll)
 
+        print("temp_extracted_mcq", temp_extracted_mcq_with_roll)
         for roll_mcq in temp_extracted_mcq_with_roll:
             extracted_mcq_with_roll.add(roll_mcq)
 
-        print("extrcted roll numbers:", extracted_roll_numbers)
+        print("extracted_mcq_with_roll", extracted_mcq_with_roll)
         if not current_expected_roll_numbers:
             return JSONResponse(
                 content={
@@ -312,26 +350,29 @@ def extract_text_and_display(img, expected_roll_numbers, reader):
             2,
         )
 
+        # Handle the detection of both roll number and MCQ answer
         if len(text) == 1 and text in "ABCD":
             prev_text = result[i - 1][1]
             if prev_text.isdigit() and 0 <= int(prev_text) <= 40:
                 text = f"{prev_text} {text}"
+
         if not text.isdigit() and not text.isalpha():
             roll_number, mcq_answer = (
                 "".join(filter(str.isdigit, text)),
                 "".join(filter(str.isalpha, text)),
             )
+
+            # If the roll number is detected, clean it by removing leading zeroes for single digits
+            if roll_number:
+                roll_number = str(int(roll_number))  # This removes leading zeros
+                extracted_roll_numbers.add(roll_number)
+
             if roll_number and mcq_answer:
-                extracted_roll_numbers.add((roll_number))
                 extracted_mcq_with_roll.add((roll_number, mcq_answer))
-                # print(f"Roll Number: {roll_number}, MCQ Answer: {mcq_answer}")
-    # print('extracted_roll_no:', extracted_roll_numbers)
+
+    # Find missing roll numbers
     missing_roll_numbers = sorted(
         list(set(expected_roll_numbers) - extracted_roll_numbers), key=int
     )
-
-    # print("Expected Roll Numbers:", expected_roll_numbers)
-    # print("Extracted Roll Numbers:", extracted_roll_numbers)
-    # print("Missing Roll Numbers:", missing_roll_numbers)
 
     return missing_roll_numbers, extracted_roll_numbers, extracted_mcq_with_roll
