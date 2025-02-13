@@ -9,8 +9,8 @@ venv/
 *.log
 
 # Ignore Docker files
-docker-compose.yml
-Dockerfile
+
+
 
 # Ignore node_modules for JavaScript/Node.js projects
 node_modules/
