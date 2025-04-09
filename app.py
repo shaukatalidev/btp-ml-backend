@@ -141,7 +141,7 @@ def rdm():
 
 def convertToWAV(file):
     filename = f"{datetime.datetime.now().timestamp()}"
-    inloc = f"uploads/{filename}.{re.split('[/;]',file.content_type)[1]}"
+    inloc = f"uploads/{filename}.{re.split('[/;]', file.content_type)[1]}"
     outloc = f"uploads/{filename}.wav"
     with open(inloc, "wb") as f:
         f.write(file.file.read())
@@ -208,7 +208,11 @@ async def transcribe(file: UploadFile = File(...), language: str = Form("en")):
 
 
 @app.post("/mcq-analysis")
-async def mcq_analysis(file: UploadFile = File(...), rollNumbers: str = Form(...)):
+async def mcq_analysis(
+    file: UploadFile = File(...),
+    rollNumbers: str = Form(...),
+    class_limit: int = Form(...),
+):
     initial_expected_roll_numbers = json.loads(
         rollNumbers
     )  # Convert JSON string back to a list
@@ -236,7 +240,9 @@ async def mcq_analysis(file: UploadFile = File(...), rollNumbers: str = Form(...
             current_expected_roll_numbers,
             temp_extracted_roll_number,
             temp_extracted_mcq_with_roll,
-        ) = extract_text_and_display(image_path, current_expected_roll_numbers, reader)
+        ) = extract_text_and_display(
+            image_path, current_expected_roll_numbers, reader, class_limit
+        )
 
         current_expected_roll_numbers = set(current_expected_roll_numbers)
 
@@ -332,7 +338,7 @@ def draw_bounding_boxes_and_text(img, lpCnt, lpTxt):
     cv2.imwrite("ullaspullamydata.jpg", img)
 
 
-def extract_text_and_display(img, expected_roll_numbers, reader):
+def extract_text_and_display(img, expected_roll_numbers, reader, class_limit):
     result = reader.readtext(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY))
     extracted_roll_numbers = set()
     extracted_mcq_with_roll = set()
@@ -353,8 +359,10 @@ def extract_text_and_display(img, expected_roll_numbers, reader):
         # Handle the detection of both roll number and MCQ answer
         if len(text) == 1 and text in "ABCD":
             prev_text = result[i - 1][1]
-            if prev_text.isdigit() and 0 <= int(prev_text) <= 40:
-                text = f"{prev_text} {text}"
+            if prev_text.isdigit():
+                roll_number = int(prev_text)
+                if 1 <= roll_number <= class_limit:
+                    text = f"{roll_number} {text}"
 
         if not text.isdigit() and not text.isalpha():
             roll_number, mcq_answer = (
@@ -365,7 +373,11 @@ def extract_text_and_display(img, expected_roll_numbers, reader):
             # If the roll number is detected, clean it by removing leading zeroes for single digits
             if roll_number:
                 roll_number = str(int(roll_number))  # This removes leading zeros
-                extracted_roll_numbers.add(roll_number)
+                roll_number = int(
+                    roll_number
+                )  # Convert to integer for boundary checking
+                if 1 <= roll_number <= class_limit:
+                    extracted_roll_numbers.add(roll_number)
 
             if roll_number and mcq_answer:
                 extracted_mcq_with_roll.add((roll_number, mcq_answer))
@@ -375,4 +387,8 @@ def extract_text_and_display(img, expected_roll_numbers, reader):
         list(set(expected_roll_numbers) - extracted_roll_numbers), key=int
     )
 
-    return missing_roll_numbers, extracted_roll_numbers, extracted_mcq_with_roll
+    return (
+        missing_roll_numbers,
+        sorted(extracted_roll_numbers),
+        sorted(extracted_mcq_with_roll),
+    )
