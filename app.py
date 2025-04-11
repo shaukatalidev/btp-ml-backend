@@ -4,7 +4,7 @@ import re
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from typing import List
+from typing import List, Optional
 import nltk
 import pandas as pd
 from bertopic import BERTopic
@@ -211,8 +211,9 @@ async def transcribe(file: UploadFile = File(...), language: str = Form("en")):
 async def mcq_analysis(
     file: UploadFile = File(...),
     rollNumbers: str = Form(...),
-    class_limit: int = Form(...),
+    class_limit: Optional[int] = Form(...),
 ):
+    class_limit = int(class_limit) or 40
     initial_expected_roll_numbers = json.loads(
         rollNumbers
     )  # Convert JSON string back to a list
