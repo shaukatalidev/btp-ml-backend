@@ -9,8 +9,8 @@ services:
   ngrok-ml:
     image: ngrok/ngrok:latest
     environment:
-      - NGROK_AUTHTOKEN=2gv9k1JzoILrQz568I02o7imFg1_6iVKmrGJABNiHn8UFYtVa # Add your ngrok auth token here
-    command: http --log=stdout  ml:8000
+      - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN} # Add your ngrok auth token here
+    command: http --domain=sweet-frequently-cardinal.ngrok-free.app ml:8000
     depends_on:
       - ml
     networks:
