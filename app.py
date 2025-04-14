@@ -1,3 +1,4 @@
+import asyncio
 import json
 from fastapi import FastAPI, File, Form, UploadFile, HTTPException
 import re
@@ -23,6 +24,12 @@ import os
 from transformers import AutoTokenizer, AutoModel
 import torch
 from sklearn.cluster import KMeans
+import tempfile
+from googletrans import Translator
+import subprocess
+import imageio_ffmpeg
+import nest_asyncio
+
 
 # Initialize the NLTK stemmer
 stemmer = nltk.PorterStemmer()
@@ -139,17 +146,44 @@ def rdm():
     return str(datetime.datetime.now().timestamp())
 
 
-def convertToWAV(file):
+def convertToWAV(file: UploadFile):
+    os.makedirs("uploads", exist_ok=True)  # ensure directory exists
+
     filename = f"{datetime.datetime.now().timestamp()}"
-    inloc = f"uploads/{filename}.{re.split('[/;]', file.content_type)[1]}"
-    outloc = f"uploads/{filename}.wav"
-    with open(inloc, "wb") as f:
+    ext = re.split("[/;]", file.content_type)[1]
+    input_path = f"uploads/{filename}.{ext}"
+    output_path = f"uploads/{filename}.wav"
+
+    with open(input_path, "wb") as f:
         f.write(file.file.read())
-    ffmpeg.input(inloc).output(outloc).run()
-    return outloc
+
+    ffmpeg_path = imageio_ffmpeg.get_ffmpeg_exe()
+
+    command = [
+        ffmpeg_path,
+        "-y",
+        "-i",
+        input_path,
+        "-ar",
+        "16000",
+        "-ac",
+        "1",
+        output_path,
+    ]
+
+    try:
+        subprocess.run(
+            command, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+        )
+    except subprocess.CalledProcessError as e:
+        print("FFmpeg Error:", e.stderr.decode())
+        raise
+
+    os.remove(input_path)  # cleanup original file
+    return output_path
 
 
-# Preprocess the audio for model input
+# Optional: keep if you need for torchaudio models
 def preprocess_audio(file_path, processor, sample_rate=16000):
     speech_array, sr = torchaudio.load(file_path)
     if sr != sample_rate:
@@ -162,49 +196,54 @@ def preprocess_audio(file_path, processor, sample_rate=16000):
 
 
 @app.post("/transcribe")
-async def transcribe(file: UploadFile = File(...), language: str = Form("en")):
-    print("language:", language)
-    if language == "en":
-        if not re.match("audio/", file.content_type):
-            raise HTTPException(status_code=400, detail="File type not supported")
+async def transcribe(
+    file: UploadFile = File(...), source: str = Form("en"), language: str = Form("en")
+):
+    print(f"Requested translation: {source} → {language}")
 
-        if not re.match("audio/wav", file.content_type):
+    if not file.content_type.startswith("audio/"):
+        raise HTTPException(
+            status_code=400, detail="Invalid file type. Please upload an audio file."
+        )
+
+    print(f"Uploaded file: {file.filename} | Type: {file.content_type}")
+
+    try:
+        # Convert MP3 (or other) to WAV
+        if file.content_type != "audio/wav":
             file_path = convertToWAV(file)
         else:
-            file_path = file.filename
-        try:
-            recognizer = sr.Recognizer()
-            with sr.AudioFile(file_path) as source:
-                data = recognizer.record(source)
-            transcript = recognizer.recognize_google(data, key=None)
-            os.remove(file_path)
-            return {"transcript": transcript}
-        except Exception as e:
-            print("error: ", str(e))
-            raise HTTPException(status_code=500, detail="Unable to transcribe")
-    # Hindi transcription (using Wav2Vec2)
-    else:
-        try:
-            file_path = convertToWAV(file)  # Ensure file is converted to wav
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as temp_audio:
+                temp_audio.write(await file.read())
+                file_path = temp_audio.name
 
-            # Load Wav2Vec2 processor and model for Hindi
-            model_name = "theainerd/Wav2Vec2-large-xlsr-hindi"
-            processor = Wav2Vec2Processor.from_pretrained(model_name)
-            model = Wav2Vec2ForCTC.from_pretrained(model_name)
+        # Transcribe audio
+        recognizer = sr.Recognizer()
+        with sr.AudioFile(file_path) as source_audio:
+            audio_data = recognizer.record(source_audio)
+        transcript = recognizer.recognize_google(audio_data)
+        print("Transcript:", transcript)
 
-            # Transcribe audio
-            input_values = preprocess_audio(file_path, processor)
-            logits = model(input_values).logits
-            predicted_ids = torch.argmax(logits, dim=-1)
-            transcription = processor.batch_decode(predicted_ids)
+        # Translate
+        # translator=Translator()
+        transcribeconv = await Translator().translate(transcript, src="en", dest=source)
+        translated_text = await Translator().translate(
+            transcribeconv.text, src=source, dest=language
+        )
 
-            os.remove(file_path)  # Clean up the uploaded/converted file
-            print("Transcription:", transcription[0])
-            return {"transcript": transcription[0]}
+        print("Translated Text:", translated_text.text)
 
-        except Exception as e:
-            print("Error during Hindi transcription:", str(e))
-            raise HTTPException(status_code=500, detail="Unable to transcribe in Hindi")
+        return {
+            "transcript": translated_text.text,
+            "Transcriptconv": transcribeconv.text,
+            "translated": transcript,
+        }
+
+    except Exception as e:
+        print("Error:", str(e))
+        raise HTTPException(
+            status_code=500, detail="Transcription or translation failed."
+        )
 
 
 @app.post("/mcq-analysis")
@@ -213,7 +252,6 @@ async def mcq_analysis(
     rollNumbers: str = Form(...),
     class_limit: Optional[int] = Form(...),
 ):
-    class_limit = int(class_limit) or 40
     initial_expected_roll_numbers = json.loads(
         rollNumbers
     )  # Convert JSON string back to a list
@@ -341,6 +379,7 @@ def draw_bounding_boxes_and_text(img, lpCnt, lpTxt):
 
 def extract_text_and_display(img, expected_roll_numbers, reader, class_limit):
     result = reader.readtext(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY))
+
     extracted_roll_numbers = set()
     extracted_mcq_with_roll = set()
 

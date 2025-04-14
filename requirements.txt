@@ -46,3 +46,6 @@ transformers
 sounddevice
 bertopic
 soundfile
+imageio-ffmpeg
+googletrans
+nest_asyncio
