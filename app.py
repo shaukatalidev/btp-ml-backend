@@ -250,8 +250,13 @@ async def transcribe(
 async def mcq_analysis(
     file: UploadFile = File(...),
     rollNumbers: str = Form(...),
-    class_limit: Optional[int] = Form(...),
+    class_limit: Optional[int | str] = Form(...),
 ):
+    try:
+        class_limit = int(class_limit.strip('"')) if class_limit else 40
+    except ValueError:
+        class_limit = 40  # fallback in case of bad input
+
     initial_expected_roll_numbers = json.loads(
         rollNumbers
     )  # Convert JSON string back to a list
