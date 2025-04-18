@@ -4,13 +4,13 @@ services:
       context: .
       dockerfile: Dockerfile
     ports:
-      - "8000:8000"
+      - "9000:9000"
 
   ngrok-ml:
     image: ngrok/ngrok:latest
     environment:
       - NGROK_AUTHTOKEN=${NGROK_AUTHTOKEN} # Add your ngrok auth token here
-    command: http --domain=sweet-frequently-cardinal.ngrok-free.app ml:8000
+    command: http --domain=sweet-frequently-cardinal.ngrok-free.app ml:9000
     depends_on:
       - ml
     networks:

@@ -197,7 +197,7 @@ def preprocess_audio(file_path, processor, sample_rate=16000):
 
 @app.post("/transcribe")
 async def transcribe(
-    file: UploadFile = File(...), source: str = Form("en"), language: str = Form("en")
+    file: UploadFile = File(...), source: str = Form("hi"), language: str = Form("en")
 ):
     print(f"Requested translation: {source} → {language}")
 
@@ -251,12 +251,13 @@ async def mcq_analysis(
     file: UploadFile = File(...),
     rollNumbers: str = Form(...),
     class_limit: Optional[int | str] = Form(...),
+    # class_limit: Optional[int] = Form(...),
 ):
     try:
         class_limit = int(class_limit.strip('"')) if class_limit else 40
     except ValueError:
-        class_limit = 40  # fallback in case of bad input
-
+        class_limit = 40
+    class_limit = 40
     initial_expected_roll_numbers = json.loads(
         rollNumbers
     )  # Convert JSON string back to a list
