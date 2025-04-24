@@ -295,17 +295,17 @@ async def mcq_analysis(
         for roll in temp_extracted_roll_number:
             extracted_roll_numbers.add(roll)
 
-        print("temp_extracted_mcq", temp_extracted_mcq_with_roll)
-        for roll_mcq in temp_extracted_mcq_with_roll:
-            extracted_mcq_with_roll.add(roll_mcq)
+        # print("temp_extracted_mcq", temp_extracted_mcq_with_roll)
+        # for roll_mcq in temp_extracted_mcq_with_roll:
+        #     extracted_mcq_with_roll.add(roll_mcq)
 
-        print("extracted_mcq_with_roll", extracted_mcq_with_roll)
+        # print("extracted_mcq_with_roll", extracted_mcq_with_roll)
         if not current_expected_roll_numbers:
             return JSONResponse(
                 content={
                     "message": "All roll numbers have been detected.",
                     "extracted_roll_numbers": list(extracted_roll_numbers),
-                    "extracted_mcq_with_roll": list(extracted_mcq_with_roll),
+                    "extracted_mcq_with_roll": list(temp_extracted_mcq_with_roll),
                 }
             )
         else:
