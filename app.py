@@ -1,4 +1,3 @@
-import asyncio
 import json
 from fastapi import FastAPI, File, Form, UploadFile, HTTPException
 import re
@@ -7,11 +6,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import List, Optional
 import nltk
-import pandas as pd
-from bertopic import BERTopic
-from bertopic.representation import KeyBERTInspired
 import datetime
-import ffmpeg
 import speech_recognition as sr
 import cv2
 import numpy as np
@@ -19,17 +14,14 @@ import imutils
 import easyocr
 import torch
 import torchaudio
-from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
 import os
 from transformers import AutoTokenizer, AutoModel
-import torch
-from sklearn.cluster import KMeans
 import tempfile
 from googletrans import Translator
 import subprocess
 import imageio_ffmpeg
-import nest_asyncio
-
+from sentence_transformers import SentenceTransformer
+from sklearn.cluster import DBSCAN
 
 # Initialize the NLTK stemmer
 stemmer = nltk.PorterStemmer()
@@ -71,10 +63,8 @@ class ProcessRequest(BaseModel):
     texts: List[str]
 
 
-def preprocess_queries(texts):
-    text = texts.lower().strip()
-    text = stemmer.stem(text)
-    return text
+def preprocess_queries(text):
+    return stemmer.stem(text.lower().strip())
 
 
 # # Step 4: Load ai4bharat's Indic-BERT model
@@ -112,34 +102,47 @@ embedding_model = IndicBERTEmbedding(model, tokenizer)
 
 @app.post("/process", response_model=List[str])
 async def pos_queries(request: ProcessRequest):
-    # Step 1: Load the dataset from request
-    rawdatas = request.texts
-    datas = [preprocess_queries(rawdata) for rawdata in rawdatas]
+    questions = request.texts
 
-    # Step 2: Convert to DataFrame for easier handling
-    df = pd.DataFrame({"question": datas})
+    model_name = "all-MiniLM-L6-v2"
+    eps = 0.5
+    min_samples = 2
+    # Step 1 & 2: Translate all inputs to English
+    if not questions:
+        return []
 
-    # Step 3: Generate embeddings using Indic-BERT
-    questions = df["question"].tolist()
-    embeddings = embedding_model.embed(questions)
+    # Load the embedding model
+    model = SentenceTransformer(model_name)
 
-    # Step 4: Apply KMeans clustering on the embeddings
-    num_clusters = 5  # Adjust the number of clusters as needed
-    kmeans = KMeans(n_clusters=num_clusters, random_state=0)
-    kmeans.fit(embeddings)
+    # Get embeddings
+    embeddings = model.encode(questions)
 
-    # Step 5: Identify the most representative question for each cluster
-    clusters_multilingual = {}
-    for i, label in enumerate(kmeans.labels_):
-        if label not in clusters_multilingual:
-            clusters_multilingual[label] = questions[i]
+    # Perform clustering
+    clustering_model = DBSCAN(eps=eps, min_samples=min_samples, metric="cosine")
+    clustering_model.fit(embeddings)
+    labels = clustering_model.labels_
 
-    # Step 6: Return the representative questions
-    representative_questions_list = [
-        question for _, question in clusters_multilingual.items()
-    ]
+    # Group questions by cluster
+    clusters = {}
+    for label, question in zip(labels, questions):
+        clusters.setdefault(label, []).append(question)
 
-    return representative_questions_list
+    # Choose representative question per cluster
+    unique_questions = []
+    for label, cluster_questions in clusters.items():
+        if label == -1:
+            # Noise points, treat each as unique
+            unique_questions.extend(cluster_questions)
+        else:
+            cluster_embeddings = model.encode(cluster_questions)
+            centroid = np.mean(cluster_embeddings, axis=0)
+            distances = [
+                np.linalg.norm(embedding - centroid) for embedding in cluster_embeddings
+            ]
+            representative = cluster_questions[np.argmin(distances)]
+            unique_questions.append(representative)
+
+    return unique_questions
 
 
 def rdm():
@@ -238,7 +241,6 @@ async def transcribe(
             "Transcriptconv": transcribeconv.text,
             "translated": transcript,
         }
-
     except Exception as e:
         print("Error:", str(e))
         raise HTTPException(
@@ -251,13 +253,12 @@ async def mcq_analysis(
     file: UploadFile = File(...),
     rollNumbers: str = Form(...),
     class_limit: Optional[int | str] = Form(...),
-    # class_limit: Optional[int] = Form(...),
 ):
     try:
         class_limit = int(class_limit.strip('"')) if class_limit else 40
     except ValueError:
         class_limit = 40
-    class_limit = 40
+
     initial_expected_roll_numbers = json.loads(
         rollNumbers
     )  # Convert JSON string back to a list
@@ -403,7 +404,7 @@ def extract_text_and_display(img, expected_roll_numbers, reader, class_limit):
         )
 
         # Handle the detection of both roll number and MCQ answer
-        if len(text) == 1 and text in "ABCD":
+        if len(text) == 1 and text in ["A", "B", "C", "D"]:
             prev_text = result[i - 1][1]
             if prev_text.isdigit():
                 roll_number = int(prev_text)
@@ -425,14 +426,14 @@ def extract_text_and_display(img, expected_roll_numbers, reader, class_limit):
                 if 1 <= roll_number <= class_limit:
                     extracted_roll_numbers.add(roll_number)
 
-            if roll_number and mcq_answer:
+            if roll_number and mcq_answer in ["A", "B", "C", "D"]:
                 extracted_mcq_with_roll.add((roll_number, mcq_answer))
 
     # Find missing roll numbers
     missing_roll_numbers = sorted(
         list(set(expected_roll_numbers) - extracted_roll_numbers), key=int
     )
-
+    print(extracted_mcq_with_roll)
     return (
         missing_roll_numbers,
         sorted(extracted_roll_numbers),
