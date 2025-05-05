@@ -24,16 +24,30 @@ jobs:
       id: pytest
       run: |
         # Run pytest and save output to a file
-        pytest > pytest_results.txt || echo "Tests failed but continuing workflow" 
-    - name: Send Discord notification
+        pytest -v | tee pytest_results.txt || echo "Tests failed but continuing workflow"
+        # Get the last few lines for the summary
+        tail -n 10 pytest_results.txt > pytest_summary.txt
+    - name: Discord notification
       if: always()
-      run: |
-        # Create a very simple message
-        echo '{
-          "content": "Test results for ${{ github.repository }} (${{ github.ref_name }})"
-        }' > discord_payload.json
-        
-        # Send the simple message to Discord
-        curl -H "Content-Type: application/json" \
-          -d @discord_payload.json \
-          "https://discord.com/api/webhooks/1303432290759868417/ums51fXJTl632G8RPffpW12eNXg4qB84UwAcJPVMqbcgLNudJqYJEryPkWr0TWdo3QHy"
+      uses: sarisia/actions-status-discord@v1
+      with:
+        webhook: https://discord.com/api/webhooks/1303432290759868417/ums51fXJTl632G8RPffpW12eNXg4qB84UwAcJPVMqbcgLNudJqYJEryPkWr0TWdo3QHy
+        title: "Pytest Results"
+        description: "${{ github.repository }} (${{ github.ref_name }})"
+        content: |
+          **Branch:** ${{ github.ref_name }}
+          **Commit:** ${{ github.sha }}
+          
+          **Test Summary:**
+          ```
+          ${{ join(github.event.commits.*.message, '\n') }}
+          ```
+        color: 0x00ff00
+        username: GitHub Actions
+        avatar_url: https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png
+    - name: Upload test results as artifact
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: pytest-results
+        path: pytest_results.txt
