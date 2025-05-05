@@ -20,31 +20,20 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install pytest
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
     - name: Test with pytest
       id: pytest
       run: |
         # Run pytest and save output to a file
-        pytest -v > pytest_results.txt || echo "Tests failed but continuing workflow" 
+        pytest > pytest_results.txt || echo "Tests failed but continuing workflow" 
     - name: Send Discord notification
       if: always()
       run: |
-        # Extract test result summary
-        SUMMARY=$(cat pytest_results.txt)
+        # Create a very simple message
+        echo '{
+          "content": "Test results for ${{ github.repository }} (${{ github.ref_name }})"
+        }' > discord_payload.json
         
-        # Create a simple message with the test results
-        MESSAGE="## Test Results for ${{ github.repository }}
-        
-        **Branch:** ${{ github.ref_name }}
-        **Commit:** ${{ github.sha }}
-        
-        \`\`\`
-        $SUMMARY
-        \`\`\`
-        
-        [View Workflow Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
-        
-        # Send to Discord using the simple content approach
+        # Send the simple message to Discord
         curl -H "Content-Type: application/json" \
-          -d "{\"content\": \"$MESSAGE\"}" \
+          -d @discord_payload.json \
           "https://discord.com/api/webhooks/1303432290759868417/ums51fXJTl632G8RPffpW12eNXg4qB84UwAcJPVMqbcgLNudJqYJEryPkWr0TWdo3QHy"
