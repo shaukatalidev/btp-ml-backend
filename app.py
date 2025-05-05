@@ -17,7 +17,7 @@ import torchaudio
 import os
 from transformers import AutoTokenizer, AutoModel
 import tempfile
-from googletrans import Translator
+from deep_translator import GoogleTranslator
 import subprocess
 import imageio_ffmpeg
 from sentence_transformers import SentenceTransformer
@@ -197,7 +197,6 @@ def preprocess_audio(file_path, processor, sample_rate=16000):
     ).input_values
     return input_values
 
-
 @app.post("/transcribe")
 async def transcribe(
     file: UploadFile = File(...), source: str = Form("hi"), language: str = Form("en")
@@ -228,26 +227,25 @@ async def transcribe(
         print("Transcript:", transcript)
 
         # Translate
-        # translator=Translator()
-        transcribeconv = await Translator().translate(transcript, src="en", dest=source)
-        translated_text = await Translator().translate(
-            transcribeconv.text, src=source, dest=language
-        )
+        translator = GoogleTranslator(source='en', target=source)
+        transcribeconv_text = translator.translate(transcript)
 
-        print("Translated Text:", translated_text.text)
+        translator2 = GoogleTranslator(source=source, target=language)
+        translated_text = translator2.translate(transcribeconv_text)
 
+        # And adjust the return statement
         return {
-            "transcript": translated_text.text,
-            "Transcriptconv": transcribeconv.text,
+            "transcript": translated_text,
+            "Transcriptconv": transcribeconv_text,
             "translated": transcript,
         }
+
     except Exception as e:
         print("Error:", str(e))
         raise HTTPException(
             status_code=500, detail="Transcription or translation failed."
         )
-
-
+    
 @app.post("/mcq-analysis")
 async def mcq_analysis(
     file: UploadFile = File(...),
