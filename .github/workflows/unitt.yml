@@ -25,11 +25,22 @@ jobs:
       run: |
         # Run pytest and save output to a file
         pytest -v | tee pytest_results.txt || echo "Tests failed but continuing workflow"
+        
+        # Extract test results in a safer way
+        echo "TEST_RESULTS<<EOF" >> $GITHUB_ENV
+        if grep -q "=== .* passed" pytest_results.txt; then
+          grep "=== .* passed" pytest_results.txt | tail -1 >> $GITHUB_ENV
+        elif grep -q "=== .* test session starts ===" pytest_results.txt; then
+          echo "Tests were run but no summary found" >> $GITHUB_ENV
+        else
+          echo "No test results available" >> $GITHUB_ENV
+        fi
+        echo "EOF" >> $GITHUB_ENV
     - name: Send Discord notification
       if: always()
       uses: sarisia/actions-status-discord@v1
       with:
         webhook: https://discord.com/api/webhooks/1303432290759868417/ums51fXJTl632G8RPffpW12eNXg4qB84UwAcJPVMqbcgLNudJqYJEryPkWr0TWdo3QHy
         title: "Pytest Results"
-        description: "${{ github.repository }} (${{ github.ref_name }})"
+        description: "${{ github.repository }} (${{ github.ref_name }})\n\n${{ env.TEST_RESULTS }}"
         username: GitHub Actions
