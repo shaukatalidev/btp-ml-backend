@@ -27,31 +27,26 @@ jobs:
         # Run pytest and save output to a file
         pytest -v | tee pytest_results.txt || echo "Tests failed but continuing workflow"
         
-        # Extract test summary for Discord
+        # Create a simpler summary without special characters
         if grep -q "collected" pytest_results.txt; then
-          TOTAL=$(grep "collected" pytest_results.txt | sed -E 's/.*collected ([0-9]+) item.*/\1/')
           PASSED=$(grep -c "PASSED" pytest_results.txt || echo 0)
           FAILED=$(grep -c "FAILED" pytest_results.txt || echo 0)
           SKIPPED=$(grep -c "SKIPPED" pytest_results.txt || echo 0)
-          ERROR=$(grep -c "ERROR" pytest_results.txt || echo 0)
-          XFAILED=$(grep -c "XFAILED" pytest_results.txt || echo 0)
-          XPASSED=$(grep -c "XPASSED" pytest_results.txt || echo 0)
           
-          echo "summary=✅ Passed: $PASSED | ❌ Failed: $FAILED | ⏩ Skipped: $SKIPPED | ⚠️ Error: $ERROR | 🔶 XFailed: $XFAILED | 🔶 XPassed: $XPASSED" >> $GITHUB_ENV
+          # Store results as separate environment variables to avoid format issues
+          echo "TESTS_PASSED=$PASSED" >> $GITHUB_ENV
+          echo "TESTS_FAILED=$FAILED" >> $GITHUB_ENV
+          echo "TESTS_SKIPPED=$SKIPPED" >> $GITHUB_ENV
         else
-          echo "summary=No test summary found" >> $GITHUB_ENV
+          echo "TESTS_PASSED=0" >> $GITHUB_ENV
+          echo "TESTS_FAILED=0" >> $GITHUB_ENV
+          echo "TESTS_SKIPPED=0" >> $GITHUB_ENV
         fi
-    - name: Upload test results
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: pytest-results
-        path: pytest_results.txt
     - name: Send Discord notification
       if: always()
       uses: sarisia/actions-status-discord@v1
       with:
         webhook: https://discord.com/api/webhooks/1303432290759868417/ums51fXJTl632G8RPffpW12eNXg4qB84UwAcJPVMqbcgLNudJqYJEryPkWr0TWdo3QHy
         title: "Pytest Results"
-        description: "${{ github.repository }} (${{ github.ref_name }})\n\n${{ env.summary }}"
+        description: "${{ github.repository }} (${{ github.ref_name }})\n\nPassed: ${{ env.TESTS_PASSED }} | Failed: ${{ env.TESTS_FAILED }} | Skipped: ${{ env.TESTS_SKIPPED }}"
         username: GitHub Actions
