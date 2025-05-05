@@ -30,47 +30,21 @@ jobs:
       if: always()
       run: |
         # Extract test result summary
-        SUMMARY=$(tail -n 10 pytest_results.txt)
-        # Create JSON payload
-        COMMIT_SHA="${{ github.event.after }}"
-        if [ -z "$COMMIT_SHA" ]; then
-          COMMIT_SHA="${{ github.sha }}"
-        fi
-        SHORT_SHA=$(echo $COMMIT_SHA | cut -c1-7)
-        COMMIT_MSG=$(git log -1 --pretty=%B)
-        REPO="${{ github.repository }}"
+        SUMMARY=$(cat pytest_results.txt)
         
-        # Determine test result
-        if grep -q "failed" pytest_results.txt; then
-          STATUS="❌ Tests Failed"
-          COLOR="16711680"  # Red color
-        else
-          STATUS="✅ Tests Passed"
-          COLOR="65280"     # Green color
-        fi
+        # Create a simple message with the test results
+        MESSAGE="## Test Results for ${{ github.repository }}
         
-        # Create and send Discord message
-        payload=$(cat <<EOF
-        {
-          "embeds": [
-            {
-              "title": "$STATUS - $REPO",
-              "description": "**Commit:** [$SHORT_SHA] $COMMIT_MSG",
-              "color": $COLOR,
-              "fields": [
-                {
-                  "name": "Test Results",
-                  "value": \`\`\`$SUMMARY\`\`\`"
-                },
-                {
-                  "name": "Workflow",
-                  "value": "[${{ github.workflow }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
-                }
-              ]
-            }
-          ]
-        }
-        EOF
-        )
+        **Branch:** ${{ github.ref_name }}
+        **Commit:** ${{ github.sha }}
         
-        curl -H "Content-Type: application/json" -d "$payload" "https://discord.com/api/webhooks/1303432290759868417/ums51fXJTl632G8RPffpW12eNXg4qB84UwAcJPVMqbcgLNudJqYJEryPkWr0TWdo3QHy"
+        \`\`\`
+        $SUMMARY
+        \`\`\`
+        
+        [View Workflow Run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
+        
+        # Send to Discord using the simple content approach
+        curl -H "Content-Type: application/json" \
+          -d "{\"content\": \"$MESSAGE\"}" \
+          "https://discord.com/api/webhooks/1303432290759868417/ums51fXJTl632G8RPffpW12eNXg4qB84UwAcJPVMqbcgLNudJqYJEryPkWr0TWdo3QHy"
