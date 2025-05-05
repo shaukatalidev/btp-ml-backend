@@ -26,12 +26,24 @@ jobs:
         # Run pytest and save output to a file
         pytest -v | tee pytest_results.txt || echo "Tests failed but continuing workflow"
         
-        # Extract test results in a safer way
+        # Extract test results and format them for better display
         echo "TEST_RESULTS<<EOF" >> $GITHUB_ENV
-        if grep -q "=== .* passed" pytest_results.txt; then
-          grep "=== .* passed" pytest_results.txt | tail -1 >> $GITHUB_ENV
-        elif grep -q "=== .* test session starts ===" pytest_results.txt; then
-          echo "Tests were run but no summary found" >> $GITHUB_ENV
+        if grep -q "===" pytest_results.txt; then
+          TEST_SUMMARY=$(grep "===" pytest_results.txt | tail -1 | sed 's/=//g' | xargs)
+          
+          # Extract specific counts for emphasis
+          PASSED_COUNT=$(echo "$TEST_SUMMARY" | grep -o "[0-9]* passed" | grep -o "[0-9]*" || echo "0")
+          FAILED_COUNT=$(echo "$TEST_SUMMARY" | grep -o "[0-9]* failed" | grep -o "[0-9]*" || echo "0")
+          SKIPPED_COUNT=$(echo "$TEST_SUMMARY" | grep -o "[0-9]* skipped" | grep -o "[0-9]*" || echo "0")
+          WARNINGS_COUNT=$(echo "$TEST_SUMMARY" | grep -o "[0-9]* warnings" | grep -o "[0-9]*" || echo "0")
+          
+          # Create a formatted summary
+          echo "**Test Summary:** $TEST_SUMMARY" >> $GITHUB_ENV
+          echo "" >> $GITHUB_ENV
+          echo "**Passed:** $PASSED_COUNT tests" >> $GITHUB_ENV
+          echo "**Failed:** $FAILED_COUNT tests" >> $GITHUB_ENV
+          echo "**Skipped:** $SKIPPED_COUNT tests" >> $GITHUB_ENV
+          echo "**Warnings:** $WARNINGS_COUNT warnings" >> $GITHUB_ENV
         else
           echo "No test results available" >> $GITHUB_ENV
         fi
